@@ -30,9 +30,10 @@ use crate::{
 		initialize_services, Result,
 	},
 	models::{BlockChainType, Network, ScriptLanguage},
-	repositories::{
-		MonitorRepository, MonitorService, NetworkRepository, NetworkService, TriggerRepository,
-	},
+        repositories::{
+                MonitorRepository, MonitorService, NetworkRepository, NetworkService, TriggerRepository,
+                DbMonitorRepository, DbNetworkRepository, DbTriggerRepository,
+        },
 	services::{
 		blockchain::{ClientPool, ClientPoolTrait},
 		blockwatcher::{BlockTracker, BlockTrackerTrait, BlockWatcherService, FileBlockStorage},
@@ -208,21 +209,31 @@ async fn main() -> Result<()> {
 		return Ok(());
 	}
 
-	let (
-		filter_service,
-		trigger_execution_service,
-		active_monitors,
-		networks,
-		monitor_service,
-		network_service,
-		trigger_service,
-	) = initialize_services::<
-		MonitorRepository<NetworkRepository, TriggerRepository>,
-		NetworkRepository,
-		TriggerRepository,
-	>(None, None, None)
-	.await
-	.map_err(|e| anyhow::anyhow!("Failed to initialize services: {}. Please refer to the documentation quickstart ({}) on how to configure the service.", e, DOCUMENTATION_URL))?;
+        let saas_mode = std::env::var("SAAS_MODE").map(|v| v == "true").unwrap_or(false);
+        let (
+                filter_service,
+                trigger_execution_service,
+                active_monitors,
+                networks,
+                monitor_service,
+                network_service,
+                trigger_service,
+        ) = if saas_mode {
+                initialize_services::<
+                        DbMonitorRepository<DbNetworkRepository, DbTriggerRepository>,
+                        DbNetworkRepository,
+                        DbTriggerRepository,
+                >(None, None, None)
+                .await
+        } else {
+                initialize_services::<
+                        MonitorRepository<NetworkRepository, TriggerRepository>,
+                        NetworkRepository,
+                        TriggerRepository,
+                >(None, None, None)
+                .await
+        }
+        .map_err(|e| anyhow::anyhow!("Failed to initialize services: {}. Please refer to the documentation quickstart ({}) on how to configure the service.", e, DOCUMENTATION_URL))?;
 
 	// Pre-load all trigger scripts into memory at startup to reduce file I/O operations.
 	// This prevents repeated file descriptor usage during script execution and improves performance
@@ -687,12 +698,22 @@ async fn validate_configuration() {
 	info!("Validating configuration files...");
 
 	// Initialize services in validation mode to check configurations
-	match initialize_services::<
-		MonitorRepository<NetworkRepository, TriggerRepository>,
-		NetworkRepository,
-		TriggerRepository,
-	>(None, None, None)
-	.await
+        let saas_mode = std::env::var("SAAS_MODE").map(|v| v == "true").unwrap_or(false);
+        match if saas_mode {
+                initialize_services::<
+                        DbMonitorRepository<DbNetworkRepository, DbTriggerRepository>,
+                        DbNetworkRepository,
+                        DbTriggerRepository,
+                >(None, None, None)
+                .await
+        } else {
+                initialize_services::<
+                        MonitorRepository<NetworkRepository, TriggerRepository>,
+                        NetworkRepository,
+                        TriggerRepository,
+                >(None, None, None)
+                .await
+        }
 	{
 		Ok((_, _, active_monitors, networks, _, _, _)) => {
 			info!("✓ Core services initialized successfully");
