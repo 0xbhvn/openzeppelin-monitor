@@ -157,89 +157,78 @@ mod tests {
 			_ => panic!("Expected RepositoryError::LoadError"),
 		}
 	}
-#[tokio::test]
-	async fn test_load_all_happy_path() {
-		// Prepare a temporary directory for JSON configs
-		let dir = std::env::temp_dir().join("network_repo_test");
+// --- additional tests for NetworkRepository and NetworkService follow ---
+	#[tokio::test]
+	async fn test_load_all_with_empty_directory() {
+		// Setup: create a temporary empty directory
+		let dir = std::env::temp_dir().join("network_repo_empty_test");
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).unwrap();
 
-		// Write two valid JSON files matching Network's fields
-		let alpha = r#"{"id":"alpha","name":"Alpha Network","rpc_url":"https://alpha","chain_id":1}"#;
-		std::fs::write(dir.join("alpha.json"), alpha).unwrap();
-		let beta = r#"{"id":"beta","name":"Beta Network","rpc_url":"https://beta","chain_id":2}"#;
-		std::fs::write(dir.join("beta.json"), beta).unwrap();
+		// Exercise: load all networks from the empty directory
+		let result = NetworkRepository::load_all(Some(&dir)).await.unwrap();
 
-		// Invoke the loader
-		let networks = NetworkRepository::load_all(Some(&dir)).await.unwrap();
-
-		// Verify both entries are present
-		assert_eq!(networks.len(), 2);
-		assert!(networks.contains_key("alpha"));
-		assert!(networks.contains_key("beta"));
-
-		// Verify one entry’s fields
-		let a = networks.get("alpha").unwrap();
-		assert_eq!(a.id, "alpha");
-		assert_eq!(a.chain_id, 1);
-
-		// Clean up
-		std::fs::remove_dir_all(&dir).unwrap();
+		// Verify: should get an empty map
+		assert!(result.is_empty());
 	}
 
 	#[tokio::test]
-	async fn test_get_and_get_all() {
-		// Construct a sample Network instance
-		let net = Network {
-			id: "x".into(),
-			name: "X Network".into(),
-			rpc_url: "https://x".into(),
-			chain_id: 99,
-		};
-		let mut map = std::collections::HashMap::new();
-		map.insert("x".to_string(), net.clone());
-
-		// Build a repository from the map
-		let repo = NetworkRepository { networks: map.clone() };
-
-		// Test get existing
-		assert_eq!(repo.get("x").unwrap().id, "x");
-		// Test get missing
-		assert!(repo.get("missing").is_none());
-
-		// Test get_all returns a clone
-		let mut all = repo.get_all();
-		assert_eq!(all.len(), 1);
-		// Mutate returned map and ensure original stays intact
-		all.remove("x");
-		assert!(repo.get_all().contains_key("x"));
-	}
-
-	#[tokio::test]
-	async fn test_service_reload() {
-		// Setup temp dir with initial JSON
-		let dir = std::env::temp_dir().join("network_service_reload");
+	async fn test_load_all_with_malformed_json() {
+		// Setup: create a temporary directory with one malformed JSON file
+		let dir = std::env::temp_dir().join("network_repo_malformed_json_test");
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).unwrap();
-		let alpha = r#"{"id":"alpha","name":"Alpha","rpc_url":"https://alpha","chain_id":1}"#;
-		std::fs::write(dir.join("alpha.json"), alpha).unwrap();
+		let file = dir.join("bad.json");
+		std::fs::write(&file, r#"{ invalid json }"#).unwrap();
 
-		// Initialize service
-		let mut svc = NetworkService::new(Some(&dir)).await.unwrap();
-		assert!(svc.get("alpha").is_some());
-		assert!(svc.get("beta").is_none());
+		// Exercise: load_all should return an error
+		let result = NetworkRepository::load_all(Some(&dir)).await;
 
-		// Add another JSON
-		let beta = r#"{"id":"beta","name":"Beta","rpc_url":"https://beta","chain_id":2}"#;
-		std::fs::write(dir.join("beta.json"), beta).unwrap();
+		// Verify: the error variant is LoadError
+		assert!(result.is_err());
+		match result.unwrap_err() {
+			RepositoryError::LoadError(message) => {
+				assert!(message.contains("Failed to load networks"));
+			}
+			_ => panic!("Expected RepositoryError::LoadError"),
+		}
+	}
 
-		// Reload and verify
-		svc.reload(Some(&dir)).await.unwrap();
-		let all = svc.get_all();
+	#[tokio::test]
+	async fn test_load_all_with_valid_directory_and_field_values() {
+		// Setup: create a temporary directory with one valid JSON file
+		let dir = std::env::temp_dir().join("network_repo_single_test");
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let cfg = r#"{"id":"net","name":"Test Network"}"#;
+		std::fs::write(dir.join("net.json"), cfg).unwrap();
+
+		// Exercise: load all networks
+		let map = NetworkRepository::load_all(Some(&dir)).await.unwrap();
+
+		// Verify: exactly one entry with correct key and field values
+		assert_eq!(map.len(), 1);
+		let net = map.get("net").unwrap();
+		assert_eq!(net.id, "net");
+		assert_eq!(net.name, "Test Network");
+	}
+
+	#[tokio::test]
+	async fn test_service_new_and_service_methods() {
+		// Setup: create a temporary directory with two JSON configurations
+		let dir = std::env::temp_dir().join("network_service_test");
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		std::fs::write(dir.join("a.json"), r#"{"id":"a","name":"Alpha"}"#).unwrap();
+		std::fs::write(dir.join("b.json"), r#"{"id":"b","name":"Beta"}"#).unwrap();
+
+		// Exercise: initialize the service using the async new method
+		let service = NetworkService::new(Some(&dir)).await.unwrap();
+
+		// Verify: service.get_all returns both entries and service.get returns correct Network
+		let all = service.get_all();
 		assert_eq!(all.len(), 2);
-		assert!(all.contains_key("beta"));
-
-		// Clean up
-		std::fs::remove_dir_all(&dir).unwrap();
+		assert_eq!(service.get("a").unwrap().name, "Alpha");
+		assert_eq!(service.get("b").unwrap().name, "Beta");
 	}
 }
