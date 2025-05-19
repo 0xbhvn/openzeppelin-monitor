@@ -9,20 +9,25 @@ use std::{
 	collections::{BTreeMap, HashMap},
 	sync::Arc,
 };
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tokio_cron_scheduler::{Job, JobScheduler};
 use tracing::instrument;
 
 use crate::{
-	models::{BlockType, Network, ProcessedBlock},
-	services::{
-		blockchain::BlockChainClient,
-		blockwatcher::{
-			error::BlockWatcherError,
-			storage::BlockStorage,
-			tracker::{BlockTracker, BlockTrackerTrait},
-		},
-	},
+        bootstrap::has_active_monitors,
+        models::{BlockChainType, BlockType, Network, ProcessedBlock},
+        repositories::{
+                MonitorRepositoryTrait, MonitorService, NetworkRepositoryTrait, NetworkService,
+                TriggerRepositoryTrait, TriggerService,
+        },
+        services::{
+                blockchain::{BlockChainClient, ClientPoolTrait},
+                blockwatcher::{
+                        error::BlockWatcherError,
+                        storage::BlockStorage,
+                        tracker::{BlockTracker, BlockTrackerTrait},
+                },
+        },
 };
 
 /// Trait for job scheduler
@@ -304,15 +309,128 @@ where
 	///
 	/// # Arguments
 	/// * `network_slug` - Identifier of the network to stop watching
-	pub async fn stop_network_watcher(&self, network_slug: &str) -> Result<(), BlockWatcherError> {
-		let mut watchers = self.active_watchers.write().await;
+        pub async fn stop_network_watcher(&self, network_slug: &str) -> Result<(), BlockWatcherError> {
+                let mut watchers = self.active_watchers.write().await;
 
-		if let Some(mut watcher) = watchers.remove(network_slug) {
-			watcher.stop().await?;
-		}
+                if let Some(mut watcher) = watchers.remove(network_slug) {
+                        watcher.stop().await?;
+                }
 
-		Ok(())
-	}
+                Ok(())
+        }
+
+        /// Reload monitors and networks and update active watchers accordingly
+        pub async fn reload_configurations<M, N, R, P>(
+                &self,
+                monitor_service: Arc<Mutex<MonitorService<M, N, R>>>,
+                network_service: Arc<Mutex<NetworkService<N>>>,
+                trigger_service: Arc<Mutex<TriggerService<R>>>,
+                client_pool: Arc<P>,
+        ) -> Result<(), BlockWatcherError>
+        where
+                M: MonitorRepositoryTrait<N, R> + Send + Sync + 'static,
+                N: NetworkRepositoryTrait + Send + Sync + 'static,
+                R: TriggerRepositoryTrait + Send + Sync + 'static,
+                P: ClientPoolTrait + 'static,
+        {
+                // Reload repositories
+                {
+                        let mut net_service = network_service.lock().await;
+                        net_service.reload(None).await.map_err(|e| {
+                                BlockWatcherError::processing_error(
+                                        "Failed to reload networks".to_string(),
+                                        Some(Box::new(e)),
+                                        None,
+                                )
+                        })?;
+                        let networks = net_service.clone();
+
+                        let mut mon_service = monitor_service.lock().await;
+                        mon_service
+                                .reload(None, Some(networks.clone()), Some(trigger_service.lock().await.clone()))
+                                .await
+                                .map_err(|e| {
+                                        BlockWatcherError::processing_error(
+                                                "Failed to reload monitors".to_string(),
+                                                Some(Box::new(e)),
+                                                None,
+                                        )
+                                })?;
+                }
+
+                let monitors = monitor_service.lock().await.get_all();
+                let active_monitors: Vec<_> = monitors.into_values().filter(|m| !m.paused).collect();
+                let networks_map = network_service.lock().await.get_all();
+                let networks_with_monitors: Vec<Network> = networks_map
+                        .values()
+                        .filter(|n| has_active_monitors(&active_monitors, &n.slug))
+                        .cloned()
+                        .collect();
+
+                let mut watchers = self.active_watchers.write().await;
+
+                // Stop watchers for removed networks
+                let existing_slugs: Vec<String> = watchers.keys().cloned().collect();
+                for slug in existing_slugs {
+                        if !networks_with_monitors.iter().any(|n| n.slug == slug) {
+                                if let Some(mut watcher) = watchers.remove(&slug) {
+                                        watcher.stop().await?;
+                                }
+                        }
+                }
+
+                // Start watchers for new or updated networks
+                for network in networks_with_monitors {
+                        let slug = network.slug.clone();
+                        let mut restart = false;
+                        if let Some(existing) = watchers.get(&slug) {
+                                if existing.network != network {
+                                        restart = true;
+                                }
+                        } else {
+                                restart = true;
+                        }
+
+                        if restart {
+                                if let Some(mut old) = watchers.remove(&slug) {
+                                        old.stop().await?;
+                                }
+                                match network.network_type {
+                                        BlockChainType::EVM => {
+                                                if let Ok(client) = client_pool.get_evm_client(&network).await {
+                                                        let mut watcher = NetworkBlockWatcher::new(
+                                                                network.clone(),
+                                                                self.block_storage.clone(),
+                                                                self.block_handler.clone(),
+                                                                self.trigger_handler.clone(),
+                                                                self.block_tracker.clone(),
+                                                        )
+                                                        .await?;
+                                                        watcher.start((*client).clone()).await?;
+                                                        watchers.insert(slug, watcher);
+                                                }
+                                        }
+                                        BlockChainType::Stellar => {
+                                                if let Ok(client) = client_pool.get_stellar_client(&network).await {
+                                                        let mut watcher = NetworkBlockWatcher::new(
+                                                                network.clone(),
+                                                                self.block_storage.clone(),
+                                                                self.block_handler.clone(),
+                                                                self.trigger_handler.clone(),
+                                                                self.block_tracker.clone(),
+                                                        )
+                                                        .await?;
+                                                        watcher.start((*client).clone()).await?;
+                                                        watchers.insert(slug, watcher);
+                                                }
+                                        }
+                                        _ => {}
+                                }
+                        }
+                }
+
+                Ok(())
+        }
 }
 
 /// Processes new blocks for a network

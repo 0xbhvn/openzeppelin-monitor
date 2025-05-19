@@ -126,9 +126,15 @@ impl<T: TriggerRepositoryTrait> TriggerService<T> {
 	}
 
 	/// Get all triggers
-	pub fn get_all(&self) -> HashMap<String, Trigger> {
-		self.repository.get_all()
-	}
+    pub fn get_all(&self) -> HashMap<String, Trigger> {
+        self.repository.get_all()
+    }
+
+    /// Reload trigger configurations from disk
+    pub async fn reload(&mut self, path: Option<&Path>) -> Result<(), RepositoryError> {
+        self.repository = T::new(path).await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
