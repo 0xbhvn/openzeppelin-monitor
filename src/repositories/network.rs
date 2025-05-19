@@ -157,89 +157,145 @@ mod tests {
 			_ => panic!("Expected RepositoryError::LoadError"),
 		}
 	}
-#[tokio::test]
-	async fn test_load_all_happy_path() {
-		// Prepare a temporary directory for JSON configs
-		let dir = std::env::temp_dir().join("network_repo_test");
-		let _ = std::fs::remove_dir_all(&dir);
-		std::fs::create_dir_all(&dir).unwrap();
+}
+use tempfile::tempdir;
+    use serde_json;
+    use crate::models::{BlockChainType, RpcUrl};
 
-		// Write two valid JSON files matching Network's fields
-		let alpha = r#"{"id":"alpha","name":"Alpha Network","rpc_url":"https://alpha","chain_id":1}"#;
-		std::fs::write(dir.join("alpha.json"), alpha).unwrap();
-		let beta = r#"{"id":"beta","name":"Beta Network","rpc_url":"https://beta","chain_id":2}"#;
-		std::fs::write(dir.join("beta.json"), beta).unwrap();
+    // Test loading from an empty directory
+    #[tokio::test]
+    async fn test_load_all_empty_directory() {
+        let dir = tempdir().unwrap();
+        let networks = NetworkRepository::load_all(Some(dir.path())).await.unwrap();
+        assert!(networks.is_empty(), "Expected no networks in an empty directory");
+    }
 
-		// Invoke the loader
-		let networks = NetworkRepository::load_all(Some(&dir)).await.unwrap();
+    // Test loading valid JSON network configurations
+    #[tokio::test]
+    async fn test_load_all_with_valid_json() {
+        let dir = tempdir().unwrap();
+        let network = Network {
+            slug: "mainnet".to_string(),
+            name: "Mainnet".to_string(),
+            network_type: BlockChainType::EVM,
+            rpc_url: RpcUrl::parse("http://example.com").unwrap(),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&network).unwrap();
+        std::fs::write(dir.path().join("mainnet.json"), json).unwrap();
 
-		// Verify both entries are present
-		assert_eq!(networks.len(), 2);
-		assert!(networks.contains_key("alpha"));
-		assert!(networks.contains_key("beta"));
+        let networks = NetworkRepository::load_all(Some(dir.path())).await.unwrap();
+        assert_eq!(networks.len(), 1, "Should load exactly one network");
+        assert_eq!(networks.get("mainnet"), Some(&network));
+    }
 
-		// Verify one entry’s fields
-		let a = networks.get("alpha").unwrap();
-		assert_eq!(a.id, "alpha");
-		assert_eq!(a.chain_id, 1);
+    // Test get method for existing and non-existent network
+    #[test]
+    fn test_get_and_get_nonexistent() {
+        let mut map = HashMap::new();
+        let fake = Network {
+            slug: "fake".to_string(),
+            name: "FakeNet".to_string(),
+            network_type: BlockChainType::EVM,
+            rpc_url: RpcUrl::parse("http://localhost").unwrap(),
+            ..Default::default()
+        };
+        map.insert("fake".to_string(), fake.clone());
+        let repo = NetworkRepository { networks: map.clone() };
 
-		// Clean up
-		std::fs::remove_dir_all(&dir).unwrap();
-	}
+        assert_eq!(repo.get("fake"), Some(fake.clone()));
+        assert_eq!(repo.get("nope"), None);
+    }
 
-	#[tokio::test]
-	async fn test_get_and_get_all() {
-		// Construct a sample Network instance
-		let net = Network {
-			id: "x".into(),
-			name: "X Network".into(),
-			rpc_url: "https://x".into(),
-			chain_id: 99,
-		};
-		let mut map = std::collections::HashMap::new();
-		map.insert("x".to_string(), net.clone());
+    // Test get_all returns a clone of the networks map
+    #[test]
+    fn test_get_all_returns_clone() {
+        let mut map = HashMap::new();
+        let net = Network {
+            slug: "one".to_string(),
+            name: "OneNet".to_string(),
+            network_type: BlockChainType::EVM,
+            rpc_url: RpcUrl::parse("http://localhost").unwrap(),
+            ..Default::default()
+        };
+        map.insert("one".to_string(), net.clone());
+        let repo = NetworkRepository { networks: map.clone() };
 
-		// Build a repository from the map
-		let repo = NetworkRepository { networks: map.clone() };
+        let all = repo.get_all();
+        assert_eq!(all, map);
 
-		// Test get existing
-		assert_eq!(repo.get("x").unwrap().id, "x");
-		// Test get missing
-		assert!(repo.get("missing").is_none());
+        // Mutate the returned map to verify original is untouched
+        let mut modified = all.clone();
+        modified.clear();
+        assert!(!repo.get_all().is_empty(), "Original networks map should be unchanged");
+    }
 
-		// Test get_all returns a clone
-		let mut all = repo.get_all();
-		assert_eq!(all.len(), 1);
-		// Mutate returned map and ensure original stays intact
-		all.remove("x");
-		assert!(repo.get_all().contains_key("x"));
-	}
+    // Test NetworkService::new and get_all
+    #[tokio::test]
+    async fn test_service_new_and_get_all() {
+        let dir = tempdir().unwrap();
+        let network = Network {
+            slug: "net".to_string(),
+            name: "Net".to_string(),
+            network_type: BlockChainType::EVM,
+            rpc_url: RpcUrl::parse("http://example.com").unwrap(),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&network).unwrap();
+        std::fs::write(dir.path().join("net.json"), json).unwrap();
 
-	#[tokio::test]
-	async fn test_service_reload() {
-		// Setup temp dir with initial JSON
-		let dir = std::env::temp_dir().join("network_service_reload");
-		let _ = std::fs::remove_dir_all(&dir);
-		std::fs::create_dir_all(&dir).unwrap();
-		let alpha = r#"{"id":"alpha","name":"Alpha","rpc_url":"https://alpha","chain_id":1}"#;
-		std::fs::write(dir.join("alpha.json"), alpha).unwrap();
+        let service = NetworkService::new(Some(dir.path())).await.unwrap();
+        let all = service.get_all();
+        assert!(all.contains_key("net"), "Service should return the loaded network");
+    }
 
-		// Initialize service
-		let mut svc = NetworkService::new(Some(&dir)).await.unwrap();
-		assert!(svc.get("alpha").is_some());
-		assert!(svc.get("beta").is_none());
+    // Test NetworkService::new_with_repository and get
+    #[test]
+    fn test_service_new_with_repository_and_get() {
+        let dummy = Network {
+            slug: "d".to_string(),
+            name: "Dummy".to_string(),
+            network_type: BlockChainType::EVM,
+            rpc_url: RpcUrl::parse("http://localhost").unwrap(),
+            ..Default::default()
+        };
+        let mut map = HashMap::new();
+        map.insert("d".to_string(), dummy.clone());
+        let repo = NetworkRepository { networks: map.clone() };
+        let service = NetworkService::new_with_repository(repo.clone()).unwrap();
 
-		// Add another JSON
-		let beta = r#"{"id":"beta","name":"Beta","rpc_url":"https://beta","chain_id":2}"#;
-		std::fs::write(dir.join("beta.json"), beta).unwrap();
+        assert_eq!(service.get("d"), Some(dummy.clone()));
+        assert_eq!(service.get_all(), map);
+    }
 
-		// Reload and verify
-		svc.reload(Some(&dir)).await.unwrap();
-		let all = svc.get_all();
-		assert_eq!(all.len(), 2);
-		assert!(all.contains_key("beta"));
+    // Test NetworkService::reload
+    #[tokio::test]
+    async fn test_service_reload() {
+        let dir1 = tempdir().unwrap();
+        let a = Network {
+            slug: "a".to_string(),
+            name: "A".to_string(),
+            network_type: BlockChainType::EVM,
+            rpc_url: RpcUrl::parse("http://example.com").unwrap(),
+            ..Default::default()
+        };
+        let json_a = serde_json::to_string(&a).unwrap();
+        std::fs::write(dir1.path().join("a.json"), json_a).unwrap();
+        let mut service = NetworkService::new(Some(dir1.path())).await.unwrap();
+        assert!(service.get("a").is_some());
 
-		// Clean up
-		std::fs::remove_dir_all(&dir).unwrap();
-	}
+        let dir2 = tempdir().unwrap();
+        let b = Network {
+            slug: "b".to_string(),
+            name: "B".to_string(),
+            network_type: BlockChainType::EVM,
+            rpc_url: RpcUrl::parse("http://example.com").unwrap(),
+            ..Default::default()
+        };
+        let json_b = serde_json::to_string(&b).unwrap();
+        std::fs::write(dir2.path().join("b.json"), json_b).unwrap();
+        service.reload(Some(dir2.path())).await.unwrap();
+        assert!(service.get("b").is_some(), "After reload, should have network 'b'");
+        assert!(service.get("a").is_none(), "After reload, old networks should be gone");
+    }
 }

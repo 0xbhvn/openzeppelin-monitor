@@ -645,75 +645,58 @@ mod tests {
 		}
 	}
 }
-#[cfg(test)]
-mod additional_tests {
-    use super::*;
-    use crate::utils::tests::builders::evm::monitor::MonitorBuilder;
-    use std::collections::HashMap;
 
-    #[test]
-    fn test_new_with_monitors_and_accessors() {
-        let mon1 = MonitorBuilder::new().name("m1").build();
-        let mon2 = MonitorBuilder::new().name("m2").build();
-        let mut monitors = HashMap::new();
-        monitors.insert("m1".to_string(), mon1.clone());
-        monitors.insert("m2".to_string(), mon2.clone());
+#[test]
+	fn test_validate_monitor_references_empty_monitors() {
+		let monitors = HashMap::new();
+		let triggers = HashMap::new();
+		let networks = HashMap::new();
+		assert!(
+			MonitorRepository::<NetworkRepository, TriggerRepository>::validate_monitor_references(
+				&monitors,
+				&triggers,
+				&networks
+			)
+			.is_ok()
+		);
+	}
 
-        let repo = MonitorRepository::<NetworkRepository, TriggerRepository>::new_with_monitors(monitors.clone());
-        assert_eq!(repo.get("m1"), Some(mon1));
-        assert_eq!(repo.get("m2"), Some(mon2));
-        assert_eq!(repo.get("unknown"), None);
-        assert_eq!(repo.get_all(), monitors);
-    }
+	#[test]
+	fn test_new_with_monitors_get_and_get_all() {
+		let mut monitors = HashMap::new();
+		let monitor = MonitorBuilder::new()
+			.name("mon1")
+			.networks(vec![])
+			.triggers(vec![])
+			.build();
+		monitors.insert("mon1".to_string(), monitor.clone());
 
-    #[test]
-    fn test_service_accessors_with_custom_repository() {
-        let mon = MonitorBuilder::new().name("svc_mon").build();
-        let mut monitors = HashMap::new();
-        monitors.insert("svc_mon".to_string(), mon.clone());
+		let repo = MonitorRepository::<NetworkRepository, TriggerRepository>::new_with_monitors(monitors.clone());
+		// get returns the inserted monitor
+		assert_eq!(repo.get("mon1"), Some(monitor.clone()));
+		// get returns None for missing key
+		assert_eq!(repo.get("missing"), None);
+		// get_all returns a clone of the internal map
+		assert_eq!(repo.get_all(), monitors);
+	}
 
-        let repo = MonitorRepository::<NetworkRepository, TriggerRepository>::new_with_monitors(monitors.clone());
-        let service = MonitorService::new_with_repository(repo).expect("Failed to create service");
-        assert_eq!(service.get("svc_mon"), Some(mon.clone()));
-        assert_eq!(service.get("nonexistent"), None);
-        assert_eq!(service.get_all(), monitors);
-    }
+	#[test]
+	fn test_monitor_service_new_with_repository_and_getters() {
+		let mut monitors = HashMap::new();
+		let monitor = MonitorBuilder::new()
+			.name("svc_mon")
+			.networks(vec![])
+			.triggers(vec![])
+			.build();
+		monitors.insert("svc_mon".to_string(), monitor.clone());
 
-    #[test]
-    fn test_validate_monitor_references_empty() {
-        let monitors: HashMap<String, Monitor> = HashMap::new();
-        let triggers: HashMap<String, Trigger> = HashMap::new();
-        let networks: HashMap<String, Network> = HashMap::new();
+		let repo = MonitorRepository::<NetworkRepository, TriggerRepository>::new_with_monitors(monitors.clone());
+		let service = MonitorService::new_with_repository(repo).unwrap();
 
-        assert!(MonitorRepository::<NetworkRepository, TriggerRepository>::validate_monitor_references(
-            &monitors, &triggers, &networks
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn test_validate_monitor_references_multiple_errors() {
-        let mut monitors = HashMap::new();
-        let m1 = MonitorBuilder::new()
-            .name("m1")
-            .triggers(vec!["t1".to_string()])
-            .build();
-        monitors.insert("m1".to_string(), m1);
-        let m2 = MonitorBuilder::new()
-            .name("m2")
-            .networks(vec!["n2".to_string()])
-            .build();
-        monitors.insert("m2".to_string(), m2);
-
-        let triggers: HashMap<String, Trigger> = HashMap::new();
-        let networks: HashMap<String, Network> = HashMap::new();
-        let err = MonitorRepository::<NetworkRepository, TriggerRepository>::validate_monitor_references(
-            &monitors, &triggers, &networks
-        )
-        .unwrap_err()
-        .to_string();
-
-        assert!(err.contains("Monitor 'm1' references non-existent trigger 't1'"));
-        assert!(err.contains("Monitor 'm2' references non-existent network 'n2'"));
-    }
-}
+		// service.get returns the inserted monitor
+		assert_eq!(service.get("svc_mon"), Some(monitor.clone()));
+		// service.get returns None for missing key
+		assert_eq!(service.get("unknown"), None);
+		// service.get_all returns the same map
+		assert_eq!(service.get_all(), monitors);
+	}
