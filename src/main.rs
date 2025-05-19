@@ -843,84 +843,70 @@ mod tests {
 			.err()
 			.unwrap()
 			.to_string()
-			#[test]
-			fn test_cli_parse_defaults() {
-			// Simulate running without any flags
-			let cli = Cli::parse_from(&["prog"]);
-			assert!(!cli.log_file, "default log_file should be false");
-			assert!(cli.log_level.is_none(), "default log_level should be None");
-			assert!(cli.log_path.is_none(), "default log_path should be None");
-			assert!(cli.log_max_size.is_none(), "default log_max_size should be None");
-			assert!(!cli.metrics, "default metrics should be false");
-			assert!(cli.metrics_address.is_none(), "default metrics_address should be None");
-			assert!(cli.monitor_path.is_none(), "default monitor_path should be None");
-			assert!(cli.network.is_none(), "default network should be None");
-			assert!(cli.block.is_none(), "default block should be None");
-			assert!(!cli.check, "default check should be false");
-			}
+			.contains("Monitor execution failed"));
+	}
+// Additional CLI parsing and environment-variable application tests
+	#[test]
+	fn test_cli_parse_defaults() {
+		// When invoked without any arguments, all optional fields stay at their defaults
+		let args = ["test"];
+		let cli = Cli::parse_from(&args);
+		assert!(!cli.log_file, "log_file should be false by default");
+		assert!(cli.log_level.is_none(), "log_level should be None by default");
+		assert!(cli.log_path.is_none(), "log_path should be None by default");
+		assert!(cli.log_max_size.is_none(), "log_max_size should be None by default");
+		assert!(!cli.metrics, "metrics should be false by default");
+		assert!(cli.metrics_address.is_none(), "metrics_address should be None by default");
+	}
 
-			#[test]
-			fn test_cli_parse_custom_values() {
-			// Simulate passing every flag
-			let cli = Cli::parse_from(&[
-			"prog",
+	#[test]
+	fn test_cli_apply_to_env_sets_all_env_vars() {
+		// Clear any pre-existing environment
+		std::env::remove_var("LOG_MODE");
+		std::env::remove_var("LOG_LEVEL");
+		std::env::remove_var("RUST_LOG");
+		std::env::remove_var("LOG_DATA_DIR");
+		std::env::remove_var("LOG_MAX_SIZE");
+		std::env::remove_var("METRICS_ENABLED");
+		std::env::remove_var("METRICS_PORT");
+
+		let args = [
+			"test",
 			"--log-file",
 			"--log-level", "warn",
-			"--log-path", "/tmp/logs",
-			"--log-max-size", "2048",
+			"--log-path", "/var/logs",
+			"--log-max-size", "5GB",
 			"--metrics",
-			"--metrics-address", "0.0.0.0:9001",
-			"--monitor-path", "mon.json",
-			"--network", "slug",
-			"--block", "10",
-			"--check",
-			]);
-			assert!(cli.log_file);
-			assert_eq!(cli.log_level, Some("warn".to_string()));
-			assert_eq!(cli.log_path, Some("/tmp/logs".to_string()));
-			assert_eq!(cli.log_max_size, Some(2048));
-			assert!(cli.metrics);
-			assert_eq!(cli.metrics_address, Some("0.0.0.0:9001".to_string()));
-			assert_eq!(cli.monitor_path, Some("mon.json".to_string()));
-			assert_eq!(cli.network, Some("slug".to_string()));
-			assert_eq!(cli.block, Some(10));
-			assert!(cli.check);
-			}
+			"--metrics-address", "127.0.0.1:9090",
+		];
+		let cli = Cli::parse_from(&args);
+		cli.apply_to_env();
 
-			#[test]
-			fn test_cli_apply_to_env_overrides_variables() {
-			// Prepare environment: clear any prior settings
-			for var in &[
-			"LOG_MODE", "RUST_LOG", "LOG_LEVEL",
-			"LOG_DATA_DIR", "LOG_MAX_SIZE",
-			"METRICS_ENABLED", "METRICS_PORT",
-			] {
-			std::env::remove_var(var);
-			}
-			// Simulate an existing RUST_LOG
-			std::env::set_var("RUST_LOG", "info");
+		assert_eq!(std::env::var("LOG_MODE").unwrap(), "file");
+		assert_eq!(std::env::var("LOG_LEVEL").unwrap(), "warn");
+		assert_eq!(std::env::var("RUST_LOG").unwrap(), "warn");
+		assert_eq!(std::env::var("LOG_DATA_DIR").unwrap(), "/var/logs");
+		// 5GB = 5 * 1024^3 = 5368709120 bytes
+		assert_eq!(std::env::var("LOG_MAX_SIZE").unwrap(), "5368709120");
+		assert_eq!(std::env::var("METRICS_ENABLED").unwrap(), "true");
+		assert_eq!(std::env::var("METRICS_PORT").unwrap(), "9090");
+	}
 
-			let cli = Cli {
-			log_file: true,
-			log_level: Some("debug".to_string()),
-			log_path: Some("my_logs".to_string()),
-			log_max_size: Some(4096),
-			metrics: true,
-			metrics_address: Some("127.0.0.1:9000".to_string()),
-			monitor_path: None,
-			network: None,
-			block: None,
-			check: false,
-			};
-			cli.apply_to_env();
+	#[test]
+	fn test_cli_apply_to_env_propagates_existing_rust_log() {
+		// Simulate an existing RUST_LOG without CLI override
+		std::env::set_var("RUST_LOG", "debug");
+		std::env::remove_var("LOG_LEVEL");
 
-			assert_eq!(std::env::var("LOG_MODE").unwrap(), "file");
-			assert_eq!(std::env::var("RUST_LOG").unwrap(), "debug");
-			assert_eq!(std::env::var("LOG_LEVEL").unwrap(), "debug");
-			assert_eq!(std::env::var("LOG_DATA_DIR").unwrap(), "my_logs");
-			assert_eq!(std::env::var("LOG_MAX_SIZE").unwrap(), "4096");
-			assert_eq!(std::env::var("METRICS_ENABLED").unwrap(), "true");
-			assert_eq!(std::env::var("METRICS_PORT").unwrap(), "9000");
-			}
+		let args = ["test"];
+		let cli = Cli::parse_from(&args);
+		cli.apply_to_env();
+
+		// Since no --log-level, the existing RUST_LOG should become LOG_LEVEL
+		assert_eq!(std::env::var("LOG_LEVEL").unwrap(), "debug");
+
+		// Clean up
+		std::env::remove_var("RUST_LOG");
+		std::env::remove_var("LOG_LEVEL");
 	}
 }

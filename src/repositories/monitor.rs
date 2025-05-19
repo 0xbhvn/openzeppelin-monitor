@@ -644,98 +644,76 @@ mod tests {
 			_ => panic!("Expected RepositoryError::LoadError"),
 		}
 	}
-//! These tests use Rust’s built-in test harness and tokio for async tests.
+}
+#[cfg(test)]
+mod additional_tests {
+    use super::*;
+    use crate::utils::tests::builders::evm::monitor::MonitorBuilder;
+    use std::collections::HashMap;
 
     #[test]
     fn test_new_with_monitors_and_accessors() {
-        use super::*;
-        use std::collections::HashMap;
-        use crate::utils::tests::builders::evm::monitor::MonitorBuilder;
+        let mon1 = MonitorBuilder::new().name("m1").build();
+        let mon2 = MonitorBuilder::new().name("m2").build();
+        let mut monitors = HashMap::new();
+        monitors.insert("m1".to_string(), mon1.clone());
+        monitors.insert("m2".to_string(), mon2.clone());
 
-        let monitor = MonitorBuilder::new().name("m").networks(vec![]).triggers(vec![]).build();
-        let map = HashMap::from([("m".to_string(), monitor.clone())]);
-        let repo = MonitorRepository::<NetworkRepository, TriggerRepository>::new_with_monitors(map.clone());
-        assert_eq!(repo.get("m"), Some(monitor.clone()));
-
-        // Ensure modifying returned map doesn't affect repository
-        let mut returned = repo.get_all();
-        returned.clear();
-        assert!(returned.is_empty());
-        let all = repo.get_all();
-        assert!(all.contains_key("m"));
+        let repo = MonitorRepository::<NetworkRepository, TriggerRepository>::new_with_monitors(monitors.clone());
+        assert_eq!(repo.get("m1"), Some(mon1));
+        assert_eq!(repo.get("m2"), Some(mon2));
+        assert_eq!(repo.get("unknown"), None);
+        assert_eq!(repo.get_all(), monitors);
     }
 
     #[test]
-    fn test_validate_references_all_exist() {
-        use super::*;
-        use std::collections::HashMap;
-        use crate::utils::tests::builders::evm::monitor::MonitorBuilder;
-        use crate::models::{Trigger, Network};
+    fn test_service_accessors_with_custom_repository() {
+        let mon = MonitorBuilder::new().name("svc_mon").build();
+        let mut monitors = HashMap::new();
+        monitors.insert("svc_mon".to_string(), mon.clone());
 
+        let repo = MonitorRepository::<NetworkRepository, TriggerRepository>::new_with_monitors(monitors.clone());
+        let service = MonitorService::new_with_repository(repo).expect("Failed to create service");
+        assert_eq!(service.get("svc_mon"), Some(mon.clone()));
+        assert_eq!(service.get("nonexistent"), None);
+        assert_eq!(service.get_all(), monitors);
+    }
+
+    #[test]
+    fn test_validate_monitor_references_empty() {
+        let monitors: HashMap<String, Monitor> = HashMap::new();
+        let triggers: HashMap<String, Trigger> = HashMap::new();
+        let networks: HashMap<String, Network> = HashMap::new();
+
+        assert!(MonitorRepository::<NetworkRepository, TriggerRepository>::validate_monitor_references(
+            &monitors, &triggers, &networks
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn test_validate_monitor_references_multiple_errors() {
+        let mut monitors = HashMap::new();
         let m1 = MonitorBuilder::new()
-            .name("x")
-            .networks(vec!["n".to_string()])
-            .triggers(vec!["t".to_string()])
+            .name("m1")
+            .triggers(vec!["t1".to_string()])
             .build();
+        monitors.insert("m1".to_string(), m1);
         let m2 = MonitorBuilder::new()
-            .name("y")
-            .networks(vec!["n".to_string()])
-            .triggers(vec!["t".to_string()])
+            .name("m2")
+            .networks(vec!["n2".to_string()])
             .build();
-        let monitors = HashMap::from([
-            ("x".to_string(), m1),
-            ("y".to_string(), m2),
-        ]);
-        let triggers = HashMap::from([("t".to_string(), Trigger::default())]);
-        let networks = HashMap::from([("n".to_string(), Network::default())]);
-        assert!(MonitorRepository::<NetworkRepository, TriggerRepository>::validate_monitor_references(
+        monitors.insert("m2".to_string(), m2);
+
+        let triggers: HashMap<String, Trigger> = HashMap::new();
+        let networks: HashMap<String, Network> = HashMap::new();
+        let err = MonitorRepository::<NetworkRepository, TriggerRepository>::validate_monitor_references(
             &monitors, &triggers, &networks
-        ).is_ok());
-    }
+        )
+        .unwrap_err()
+        .to_string();
 
-    #[test]
-    fn test_validate_script_extensions_js_and_sh() {
-        use super::*;
-        use std::collections::HashMap;
-        use std::fs;
-        use std::path::Path;
-        use tempfile::TempDir;
-        use crate::{models::ScriptLanguage, utils::tests::builders::evm::monitor::MonitorBuilder};
-
-        let dir = TempDir::new().unwrap();
-        let js = dir.path().join("script.js");
-        fs::write(&js, "console.log(\"test\");").unwrap();
-        let sh = dir.path().join("script.sh");
-        fs::write(&sh, "echo \"test\"").unwrap();
-
-        let monitor = MonitorBuilder::new()
-            .name("test")
-            .networks(vec![])
-            .triggers(vec![])
-            .trigger_condition(js.to_str().unwrap(), 1000, ScriptLanguage::JavaScript, None)
-            .trigger_condition(sh.to_str().unwrap(), 1000, ScriptLanguage::Bash, None)
-            .build();
-        let monitors = HashMap::from([("test".to_string(), monitor)]);
-        let triggers = HashMap::new();
-        let networks = HashMap::new();
-        assert!(MonitorRepository::<NetworkRepository, TriggerRepository>::validate_monitor_references(
-            &monitors, &triggers, &networks
-        ).is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_service_accessors() {
-        use super::*;
-        use std::collections::HashMap;
-        use crate::utils::tests::builders::evm::monitor::MonitorBuilder;
-
-        let monitor = MonitorBuilder::new().name("m").networks(vec![]).triggers(vec![]).build();
-        let repo = MonitorRepository::<NetworkRepository, TriggerRepository>::new_with_monitors(
-            HashMap::from([("m".to_string(), monitor.clone())]),
-        );
-        let service = MonitorService::new_with_repository(repo).unwrap();
-        assert_eq!(service.get("m"), Some(monitor.clone()));
-        let all = service.get_all();
-        assert_eq!(all.get("m"), Some(&monitor));
+        assert!(err.contains("Monitor 'm1' references non-existent trigger 't1'"));
+        assert!(err.contains("Monitor 'm2' references non-existent network 'n2'"));
     }
 }
