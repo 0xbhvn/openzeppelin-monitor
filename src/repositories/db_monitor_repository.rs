@@ -219,3 +219,123 @@ where
         self.monitors.clone()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{env, path::Path, marker::PhantomData};
+    use std::collections::HashMap;
+    use sqlx::{sqlite::SqlitePool, Executor};
+    use tempfile::TempDir;
+    use async_trait::async_trait;
+    use crate::repositories::{NetworkService, TriggerService};
+    use crate::repositories::error::RepositoryError;
+    use crate::models::{Network, Trigger, Monitor};
+
+    /// Dummy implementations to satisfy the trait bounds without touching a real database
+    struct DummyNetworkService;
+    #[async_trait]
+    impl crate::repositories::NetworkRepositoryTrait for DummyNetworkService {
+        async fn new(_: Option<&Path>) -> Result<Self, RepositoryError> { Ok(Self) }
+        fn get_all(&self) -> Vec<Network> { Vec::new() }
+    }
+
+    struct DummyTriggerService;
+    #[async_trait]
+    impl crate::repositories::TriggerRepositoryTrait for DummyTriggerService {
+        async fn new(_: Option<&Path>) -> Result<Self, RepositoryError> { Ok(Self) }
+        fn get_all(&self) -> Vec<Trigger> { Vec::new() }
+    }
+
+    /// Verify db_url() behavior with explicit path, environment variable override, and fallback
+    #[tokio::test]
+    async fn test_db_url_with_path_env_and_default() {
+        let p = Path::new("foo.db");
+        assert_eq!(
+            DbMonitorRepository::<DummyNetworkService, DummyTriggerService>::db_url(Some(p)),
+            "sqlite://foo.db"
+        );
+
+        env::set_var("DATABASE_URL", "sqlite://bar.db");
+        assert_eq!(
+            DbMonitorRepository::<DummyNetworkService, DummyTriggerService>::db_url(None),
+            "sqlite://bar.db"
+        );
+        env::remove_var("DATABASE_URL");
+
+        assert_eq!(
+            DbMonitorRepository::<DummyNetworkService, DummyTriggerService>::db_url(None),
+            "sqlite://monitor.db"
+        );
+    }
+
+    /// Expect load_from_path(None, …) to error out immediately
+    #[tokio::test]
+    async fn test_load_from_path_none() {
+        let repo = DbMonitorRepository::<DummyNetworkService, DummyTriggerService> {
+            monitors: Default::default(),
+            _network_repository: PhantomData,
+            _trigger_repository: PhantomData,
+        };
+        let res = repo.load_from_path(None, None, None).await;
+        assert!(res.is_err(), "Expected error when path is None");
+    }
+
+    /// When the DB exists but the table is missing, load_all (via new) should return an error
+    #[tokio::test]
+    async fn test_load_all_missing_table() {
+        let url = "sqlite::memory:";
+        let pool = SqlitePool::connect(&url).await.unwrap();
+        let result = DbMonitorRepository::<DummyNetworkService, DummyTriggerService>::new(
+            Some(Path::new(":memory:")),
+            Some(NetworkService::new(pool.clone())),
+            Some(TriggerService::new(pool))
+        ).await;
+        assert!(result.is_err(), "Expected load_all to error when tables are missing");
+    }
+
+    /// Happy path: empty monitors table yields an empty HashMap
+    #[tokio::test]
+    async fn test_load_all_empty_table() {
+        // Create a temp file and set up an empty monitors table
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("empty.db");
+        let url = format!("sqlite://{}", db_path.display());
+        let pool = SqlitePool::connect(&url).await.unwrap();
+        pool.execute("CREATE TABLE monitors (name TEXT PRIMARY KEY, data TEXT)")
+            .await
+            .unwrap();
+
+        let repo = DbMonitorRepository::<DummyNetworkService, DummyTriggerService>::new(
+            Some(&db_path),
+            None,
+            None
+        )
+        .await
+        .unwrap();
+        assert!(repo.get_all().is_empty(), "Expected empty monitors map when table has no rows");
+    }
+
+    /// Test get() and get_all() on a manually constructed repository instance
+    #[tokio::test]
+    async fn test_get_and_get_all() {
+        let mut m = Monitor::default();
+        m.name = "m1".into();
+        let mut map = HashMap::new();
+        map.insert("m1".to_string(), m.clone());
+
+        let repo = DbMonitorRepository::<DummyNetworkService, DummyTriggerService> {
+            monitors: map.clone(),
+            _network_repository: PhantomData,
+            _trigger_repository: PhantomData,
+        };
+
+        let all = repo.get_all();
+        assert_eq!(all.len(), 1);
+        assert!(all.contains_key("m1"));
+
+        let single = repo.get("m1");
+        assert_eq!(single.unwrap().name, "m1");
+        assert!(repo.get("does_not_exist").is_none());
+    }
+}

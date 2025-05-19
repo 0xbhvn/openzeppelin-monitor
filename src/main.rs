@@ -858,4 +858,87 @@ mod tests {
 			.to_string()
 			.contains("Monitor execution failed"));
 	}
+// Test that CLI flags correctly set the corresponding environment variables.
+	#[test]
+	fn test_cli_apply_to_env_sets_variables() {
+		use std::env;
+
+		// Backup existing environment variables
+		let orig_log_mode = env::var("LOG_MODE").ok();
+		let orig_log_level = env::var("LOG_LEVEL").ok();
+		let orig_rust_log = env::var("RUST_LOG").ok();
+		let orig_data_dir = env::var("LOG_DATA_DIR").ok();
+		let orig_max_size = env::var("LOG_MAX_SIZE").ok();
+		let orig_metrics_enabled = env::var("METRICS_ENABLED").ok();
+		let orig_metrics_port = env::var("METRICS_PORT").ok();
+
+		// Clear for test
+		env::remove_var("LOG_MODE");
+		env::remove_var("LOG_LEVEL");
+		env::remove_var("RUST_LOG");
+		env::remove_var("LOG_DATA_DIR");
+		env::remove_var("LOG_MAX_SIZE");
+		env::remove_var("METRICS_ENABLED");
+		env::remove_var("METRICS_PORT");
+
+		// Build a Cli instance with all options set
+		let cli = Cli {
+			log_file: true,
+			log_level: Some("debug".into()),
+			log_path: Some("/tmp/logs".into()),
+			log_max_size: Some(1234),
+			metrics_address: Some("0.0.0.0:9000".into()),
+			metrics: true,
+			monitor_path: None,
+			network: None,
+			block: None,
+			check: false,
+		};
+
+		// Apply CLI flags to environment
+		cli.apply_to_env();
+
+		// Verify environment variables were set
+		assert_eq!(env::var("LOG_MODE").unwrap(), "file");
+		assert_eq!(env::var("LOG_LEVEL").unwrap(), "debug");
+		assert_eq!(env::var("RUST_LOG").unwrap(), "debug");
+		assert_eq!(env::var("LOG_DATA_DIR").unwrap(), "/tmp/logs");
+		assert_eq!(env::var("LOG_MAX_SIZE").unwrap(), "1234");
+		assert_eq!(env::var("METRICS_ENABLED").unwrap(), "true");
+		assert_eq!(env::var("METRICS_PORT").unwrap(), "9000");
+
+		// Restore original environment
+		if let Some(v) = orig_log_mode { env::set_var("LOG_MODE", v); } else { env::remove_var("LOG_MODE"); }
+		if let Some(v) = orig_log_level { env::set_var("LOG_LEVEL", v); } else { env::remove_var("LOG_LEVEL"); }
+		if let Some(v) = orig_rust_log { env::set_var("RUST_LOG", v); } else { env::remove_var("RUST_LOG"); }
+		if let Some(v) = orig_data_dir { env::set_var("LOG_DATA_DIR", v); } else { env::remove_var("LOG_DATA_DIR"); }
+		if let Some(v) = orig_max_size { env::set_var("LOG_MAX_SIZE", v); } else { env::remove_var("LOG_MAX_SIZE"); }
+		if let Some(v) = orig_metrics_enabled { env::set_var("METRICS_ENABLED", v); } else { env::remove_var("METRICS_ENABLED"); }
+		if let Some(v) = orig_metrics_port { env::set_var("METRICS_PORT", v); } else { env::remove_var("METRICS_PORT"); }
+	}
+
+	// Test parsing of byte-size strings into u64 values.
+	#[test]
+	fn test_parse_string_to_bytes_size_valid_and_invalid() {
+		use super::parse_string_to_bytes_size;
+
+		// Valid cases (e.g., KB=1024, MB=1024^2, GB=1024^3)
+		let valid = [
+			("500", 500),
+			("1KB", 1024),
+			("2MB", 2 * 1024 * 1024),
+			("3GB", 3 * 1024 * 1024 * 1024),
+		];
+		for (input, expected) in valid {
+			let parsed = parse_string_to_bytes_size(input.to_string()).unwrap();
+			assert_eq!(parsed, expected, "Parsing '{}' should yield {}", input, expected);
+		}
+
+		// Invalid inputs should return Err
+		let invalid = ["", "XYZ", "1XB", "1K", "1GBB"];
+		for &input in &invalid {
+			assert!(parse_string_to_bytes_size(input.to_string()).is_err(),
+					"Input '{}' should be an error", input);
+		}
+	}
 }
