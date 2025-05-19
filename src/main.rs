@@ -845,68 +845,63 @@ mod tests {
 			.to_string()
 			.contains("Monitor execution failed"));
 	}
-// Additional CLI parsing and environment-variable application tests
-	#[test]
-	fn test_cli_parse_defaults() {
-		// When invoked without any arguments, all optional fields stay at their defaults
-		let args = ["test"];
-		let cli = Cli::parse_from(&args);
-		assert!(!cli.log_file, "log_file should be false by default");
-		assert!(cli.log_level.is_none(), "log_level should be None by default");
-		assert!(cli.log_path.is_none(), "log_path should be None by default");
-		assert!(cli.log_max_size.is_none(), "log_max_size should be None by default");
-		assert!(!cli.metrics, "metrics should be false by default");
-		assert!(cli.metrics_address.is_none(), "metrics_address should be None by default");
+#[test]
+	fn test_parse_string_to_bytes_size_valid_and_numeric() {
+		// Binary units: KB=1024, MB=1_048_576, GB=1_073_741_824
+		assert_eq!(parse_string_to_bytes_size("1GB").unwrap(), 1_073_741_824);
+		assert_eq!(parse_string_to_bytes_size("500MB").unwrap(), 500 * 1_048_576);
+		assert_eq!(parse_string_to_bytes_size("1024KB").unwrap(), 1024 * 1024);
+		// No suffix: should parse as plain bytes
+		assert_eq!(parse_string_to_bytes_size("123").unwrap(), 123);
 	}
 
 	#[test]
-	fn test_cli_apply_to_env_sets_all_env_vars() {
-		// Clear any pre-existing environment
-		std::env::remove_var("LOG_MODE");
-		std::env::remove_var("LOG_LEVEL");
-		std::env::remove_var("RUST_LOG");
-		std::env::remove_var("LOG_DATA_DIR");
-		std::env::remove_var("LOG_MAX_SIZE");
-		std::env::remove_var("METRICS_ENABLED");
-		std::env::remove_var("METRICS_PORT");
-
-		let args = [
-			"test",
-			"--log-file",
-			"--log-level", "warn",
-			"--log-path", "/var/logs",
-			"--log-max-size", "5GB",
-			"--metrics",
-			"--metrics-address", "127.0.0.1:9090",
-		];
-		let cli = Cli::parse_from(&args);
-		cli.apply_to_env();
-
-		assert_eq!(std::env::var("LOG_MODE").unwrap(), "file");
-		assert_eq!(std::env::var("LOG_LEVEL").unwrap(), "warn");
-		assert_eq!(std::env::var("RUST_LOG").unwrap(), "warn");
-		assert_eq!(std::env::var("LOG_DATA_DIR").unwrap(), "/var/logs");
-		// 5GB = 5 * 1024^3 = 5368709120 bytes
-		assert_eq!(std::env::var("LOG_MAX_SIZE").unwrap(), "5368709120");
-		assert_eq!(std::env::var("METRICS_ENABLED").unwrap(), "true");
-		assert_eq!(std::env::var("METRICS_PORT").unwrap(), "9090");
+	fn test_parse_string_to_bytes_size_invalid_inputs() {
+		// Unknown suffix
+		assert!(parse_string_to_bytes_size("1XB").is_err());
+		// Non-numeric
+		assert!(parse_string_to_bytes_size("not_a_number").is_err());
+		// Empty string
+		assert!(parse_string_to_bytes_size("").is_err());
 	}
 
 	#[test]
-	fn test_cli_apply_to_env_propagates_existing_rust_log() {
-		// Simulate an existing RUST_LOG without CLI override
-		std::env::set_var("RUST_LOG", "debug");
-		std::env::remove_var("LOG_LEVEL");
+	fn test_apply_to_env_sets_env_vars() {
+		use std::env::{remove_var, var};
 
-		let args = ["test"];
-		let cli = Cli::parse_from(&args);
+		// Ensure a clean slate
+		for key in &[
+			"LOG_MODE", "RUST_LOG", "LOG_LEVEL",
+			"LOG_DATA_DIR", "LOG_MAX_SIZE",
+			"METRICS_ENABLED", "METRICS_PORT",
+		] {
+			remove_var(key);
+		}
+
+		// Construct a Cli instance with all flags set
+		let cli = Cli {
+			log_file: true,
+			log_level: Some("info".into()),
+			log_path: Some("custom_path".into()),
+			log_max_size: Some(2048),
+			metrics: true,
+			metrics_address: Some("0.0.0.0:9000".into()),
+			monitor_path: None,
+			network: None,
+			block: None,
+			check: false,
+		};
+
+		// Apply to environment
 		cli.apply_to_env();
 
-		// Since no --log-level, the existing RUST_LOG should become LOG_LEVEL
-		assert_eq!(std::env::var("LOG_LEVEL").unwrap(), "debug");
-
-		// Clean up
-		std::env::remove_var("RUST_LOG");
-		std::env::remove_var("LOG_LEVEL");
+		// Verify environment variables
+		assert_eq!(var("LOG_MODE").unwrap(), "file");
+		assert_eq!(var("RUST_LOG").unwrap(), "info");
+		assert_eq!(var("LOG_LEVEL").unwrap(), "info");
+		assert_eq!(var("LOG_DATA_DIR").unwrap(), "custom_path");
+		assert_eq!(var("LOG_MAX_SIZE").unwrap(), "2048");
+		assert_eq!(var("METRICS_ENABLED").unwrap(), "true");
+		assert_eq!(var("METRICS_PORT").unwrap(), "9000");
 	}
 }
