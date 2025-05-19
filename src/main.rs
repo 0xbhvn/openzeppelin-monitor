@@ -58,6 +58,7 @@ use std::env::{set_var, var};
 use std::sync::Arc;
 use tokio::sync::{watch, Mutex};
 use tokio_cron_scheduler::JobScheduler;
+use notify::{recommended_watcher, RecursiveMode, Watcher};
 use tracing::{error, info, instrument};
 
 type MonitorServiceType = MonitorService<
@@ -341,20 +342,20 @@ async fn main() -> Result<()> {
 	);
 
 	let file_block_storage = Arc::new(FileBlockStorage::default());
-	let block_watcher = BlockWatcherService::<FileBlockStorage, _, _, JobScheduler>::new(
-		file_block_storage.clone(),
-		block_handler,
-		trigger_handler,
-		Arc::new(BlockTracker::new(1000, Some(file_block_storage.clone()))),
-	)
-	.await?;
+        let block_watcher = Arc::new(BlockWatcherService::<FileBlockStorage, _, _, JobScheduler>::new(
+                file_block_storage.clone(),
+                block_handler,
+                trigger_handler,
+                Arc::new(BlockTracker::new(1000, Some(file_block_storage.clone()))),
+        )
+        .await?);
 
-	for network in networks_with_monitors {
-		match network.network_type {
-			BlockChainType::EVM => {
-				if let Ok(client) = client_pool.get_evm_client(&network).await {
-					let _ = block_watcher
-						.start_network_watcher(&network, (*client).clone())
+    for network in networks_with_monitors {
+        match network.network_type {
+            BlockChainType::EVM => {
+                if let Ok(client) = client_pool.get_evm_client(&network).await {
+                    let _ = block_watcher
+                        .start_network_watcher(&network, (*client).clone())
 						.await
 						.inspect_err(|e| {
 							error!("Failed to start EVM network watcher: {}", e);
@@ -376,9 +377,42 @@ async fn main() -> Result<()> {
 				}
 			}
 			BlockChainType::Midnight => unimplemented!("Midnight not implemented"),
-			BlockChainType::Solana => unimplemented!("Solana not implemented"),
-		}
-	}
+            BlockChainType::Solana => unimplemented!("Solana not implemented"),
+        }
+    }
+
+    // Watch configuration directory for changes and reload watchers
+    let bw_clone = block_watcher.clone();
+    let monitor_service_clone = monitor_service.clone();
+    let network_service_clone = network_service.clone();
+    let trigger_service_clone = trigger_service.clone();
+    let client_pool_clone = client_pool.clone();
+    let (config_tx, mut config_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut config_watcher = recommended_watcher(move |res| {
+        if res.is_ok() {
+            let _ = config_tx.send(());
+        }
+    })?;
+    config_watcher.watch(std::path::Path::new("config"), RecursiveMode::Recursive)?;
+
+    tokio::spawn(async move {
+        while config_rx.recv().await.is_some() {
+            if let Err(e) = bw_clone
+                .reload_configurations(
+                    monitor_service_clone.clone(),
+                    network_service_clone.clone(),
+                    trigger_service_clone.clone(),
+                    client_pool_clone.clone(),
+                )
+                .await
+            {
+                error!("Failed to reload configurations: {}", e);
+            }
+        }
+    });
+
+    // Keep watcher alive
+    let _config_watcher = config_watcher;
 
 	info!("Service started. Press Ctrl+C to shutdown");
 

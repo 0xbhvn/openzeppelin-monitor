@@ -412,9 +412,20 @@ impl<
 	/// Get all monitors
 	///
 	/// Returns a copy of the monitor map to prevent external mutation.
-	pub fn get_all(&self) -> HashMap<String, Monitor> {
-		self.repository.get_all()
-	}
+        pub fn get_all(&self) -> HashMap<String, Monitor> {
+                self.repository.get_all()
+        }
+
+        /// Reload monitor configurations from disk
+        pub async fn reload(
+                &mut self,
+                path: Option<&Path>,
+                network_service: Option<NetworkService<N>>,
+                trigger_service: Option<TriggerService<T>>,
+        ) -> Result<(), RepositoryError> {
+                self.repository = M::new(path, network_service, trigger_service).await?;
+                Ok(())
+        }
 
 	/// Load a monitor from a specific path
 	///

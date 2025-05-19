@@ -127,9 +127,15 @@ impl<T: NetworkRepositoryTrait> NetworkService<T> {
 	}
 
 	/// Get all networks
-	pub fn get_all(&self) -> HashMap<String, Network> {
-		self.repository.get_all()
-	}
+    pub fn get_all(&self) -> HashMap<String, Network> {
+        self.repository.get_all()
+    }
+
+    /// Reload network configurations from disk
+    pub async fn reload(&mut self, path: Option<&Path>) -> Result<(), RepositoryError> {
+        self.repository = T::new(path).await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
