@@ -157,4 +157,89 @@ mod tests {
 			_ => panic!("Expected RepositoryError::LoadError"),
 		}
 	}
+#[tokio::test]
+	async fn test_load_all_happy_path() {
+		// Prepare a temporary directory for JSON configs
+		let dir = std::env::temp_dir().join("network_repo_test");
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+
+		// Write two valid JSON files matching Network's fields
+		let alpha = r#"{"id":"alpha","name":"Alpha Network","rpc_url":"https://alpha","chain_id":1}"#;
+		std::fs::write(dir.join("alpha.json"), alpha).unwrap();
+		let beta = r#"{"id":"beta","name":"Beta Network","rpc_url":"https://beta","chain_id":2}"#;
+		std::fs::write(dir.join("beta.json"), beta).unwrap();
+
+		// Invoke the loader
+		let networks = NetworkRepository::load_all(Some(&dir)).await.unwrap();
+
+		// Verify both entries are present
+		assert_eq!(networks.len(), 2);
+		assert!(networks.contains_key("alpha"));
+		assert!(networks.contains_key("beta"));
+
+		// Verify one entry’s fields
+		let a = networks.get("alpha").unwrap();
+		assert_eq!(a.id, "alpha");
+		assert_eq!(a.chain_id, 1);
+
+		// Clean up
+		std::fs::remove_dir_all(&dir).unwrap();
+	}
+
+	#[tokio::test]
+	async fn test_get_and_get_all() {
+		// Construct a sample Network instance
+		let net = Network {
+			id: "x".into(),
+			name: "X Network".into(),
+			rpc_url: "https://x".into(),
+			chain_id: 99,
+		};
+		let mut map = std::collections::HashMap::new();
+		map.insert("x".to_string(), net.clone());
+
+		// Build a repository from the map
+		let repo = NetworkRepository { networks: map.clone() };
+
+		// Test get existing
+		assert_eq!(repo.get("x").unwrap().id, "x");
+		// Test get missing
+		assert!(repo.get("missing").is_none());
+
+		// Test get_all returns a clone
+		let mut all = repo.get_all();
+		assert_eq!(all.len(), 1);
+		// Mutate returned map and ensure original stays intact
+		all.remove("x");
+		assert!(repo.get_all().contains_key("x"));
+	}
+
+	#[tokio::test]
+	async fn test_service_reload() {
+		// Setup temp dir with initial JSON
+		let dir = std::env::temp_dir().join("network_service_reload");
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let alpha = r#"{"id":"alpha","name":"Alpha","rpc_url":"https://alpha","chain_id":1}"#;
+		std::fs::write(dir.join("alpha.json"), alpha).unwrap();
+
+		// Initialize service
+		let mut svc = NetworkService::new(Some(&dir)).await.unwrap();
+		assert!(svc.get("alpha").is_some());
+		assert!(svc.get("beta").is_none());
+
+		// Add another JSON
+		let beta = r#"{"id":"beta","name":"Beta","rpc_url":"https://beta","chain_id":2}"#;
+		std::fs::write(dir.join("beta.json"), beta).unwrap();
+
+		// Reload and verify
+		svc.reload(Some(&dir)).await.unwrap();
+		let all = svc.get_all();
+		assert_eq!(all.len(), 2);
+		assert!(all.contains_key("beta"));
+
+		// Clean up
+		std::fs::remove_dir_all(&dir).unwrap();
+	}
 }

@@ -644,4 +644,98 @@ mod tests {
 			_ => panic!("Expected RepositoryError::LoadError"),
 		}
 	}
+//! These tests use Rust’s built-in test harness and tokio for async tests.
+
+    #[test]
+    fn test_new_with_monitors_and_accessors() {
+        use super::*;
+        use std::collections::HashMap;
+        use crate::utils::tests::builders::evm::monitor::MonitorBuilder;
+
+        let monitor = MonitorBuilder::new().name("m").networks(vec![]).triggers(vec![]).build();
+        let map = HashMap::from([("m".to_string(), monitor.clone())]);
+        let repo = MonitorRepository::<NetworkRepository, TriggerRepository>::new_with_monitors(map.clone());
+        assert_eq!(repo.get("m"), Some(monitor.clone()));
+
+        // Ensure modifying returned map doesn't affect repository
+        let mut returned = repo.get_all();
+        returned.clear();
+        assert!(returned.is_empty());
+        let all = repo.get_all();
+        assert!(all.contains_key("m"));
+    }
+
+    #[test]
+    fn test_validate_references_all_exist() {
+        use super::*;
+        use std::collections::HashMap;
+        use crate::utils::tests::builders::evm::monitor::MonitorBuilder;
+        use crate::models::{Trigger, Network};
+
+        let m1 = MonitorBuilder::new()
+            .name("x")
+            .networks(vec!["n".to_string()])
+            .triggers(vec!["t".to_string()])
+            .build();
+        let m2 = MonitorBuilder::new()
+            .name("y")
+            .networks(vec!["n".to_string()])
+            .triggers(vec!["t".to_string()])
+            .build();
+        let monitors = HashMap::from([
+            ("x".to_string(), m1),
+            ("y".to_string(), m2),
+        ]);
+        let triggers = HashMap::from([("t".to_string(), Trigger::default())]);
+        let networks = HashMap::from([("n".to_string(), Network::default())]);
+        assert!(MonitorRepository::<NetworkRepository, TriggerRepository>::validate_monitor_references(
+            &monitors, &triggers, &networks
+        ).is_ok());
+    }
+
+    #[test]
+    fn test_validate_script_extensions_js_and_sh() {
+        use super::*;
+        use std::collections::HashMap;
+        use std::fs;
+        use std::path::Path;
+        use tempfile::TempDir;
+        use crate::{models::ScriptLanguage, utils::tests::builders::evm::monitor::MonitorBuilder};
+
+        let dir = TempDir::new().unwrap();
+        let js = dir.path().join("script.js");
+        fs::write(&js, "console.log(\"test\");").unwrap();
+        let sh = dir.path().join("script.sh");
+        fs::write(&sh, "echo \"test\"").unwrap();
+
+        let monitor = MonitorBuilder::new()
+            .name("test")
+            .networks(vec![])
+            .triggers(vec![])
+            .trigger_condition(js.to_str().unwrap(), 1000, ScriptLanguage::JavaScript, None)
+            .trigger_condition(sh.to_str().unwrap(), 1000, ScriptLanguage::Bash, None)
+            .build();
+        let monitors = HashMap::from([("test".to_string(), monitor)]);
+        let triggers = HashMap::new();
+        let networks = HashMap::new();
+        assert!(MonitorRepository::<NetworkRepository, TriggerRepository>::validate_monitor_references(
+            &monitors, &triggers, &networks
+        ).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_service_accessors() {
+        use super::*;
+        use std::collections::HashMap;
+        use crate::utils::tests::builders::evm::monitor::MonitorBuilder;
+
+        let monitor = MonitorBuilder::new().name("m").networks(vec![]).triggers(vec![]).build();
+        let repo = MonitorRepository::<NetworkRepository, TriggerRepository>::new_with_monitors(
+            HashMap::from([("m".to_string(), monitor.clone())]),
+        );
+        let service = MonitorService::new_with_repository(repo).unwrap();
+        assert_eq!(service.get("m"), Some(monitor.clone()));
+        let all = service.get_all();
+        assert_eq!(all.get("m"), Some(&monitor));
+    }
 }
