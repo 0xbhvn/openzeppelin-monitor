@@ -18,8 +18,14 @@ mod error;
 mod monitor;
 mod network;
 mod trigger;
+mod db_monitor_repository;
+mod db_network_repository;
+mod db_trigger_repository;
 
 pub use error::RepositoryError;
 pub use monitor::{MonitorRepository, MonitorRepositoryTrait, MonitorService};
 pub use network::{NetworkRepository, NetworkRepositoryTrait, NetworkService};
 pub use trigger::{TriggerRepository, TriggerRepositoryTrait, TriggerService};
+pub use db_monitor_repository::DbMonitorRepository;
+pub use db_network_repository::DbNetworkRepository;
+pub use db_trigger_repository::DbTriggerRepository;
