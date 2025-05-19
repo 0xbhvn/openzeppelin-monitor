@@ -29,3 +29,27 @@ pub use trigger::{TriggerRepository, TriggerRepositoryTrait, TriggerService};
 pub use db_monitor_repository::DbMonitorRepository;
 pub use db_network_repository::DbNetworkRepository;
 pub use db_trigger_repository::DbTriggerRepository;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies that all repository types and services are correctly re-exported.
+    #[test]
+    fn test_re_exports_exist() {
+        // Confirm each type exists by inspecting its type name at compile time.
+        assert!(std::any::type_name::<RepositoryError>().ends_with("RepositoryError"));
+        assert!(std::any::type_name::<MonitorRepository>().ends_with("MonitorRepository"));
+        assert!(std::any::type_name::<MonitorRepositoryTrait>().ends_with("MonitorRepositoryTrait"));
+        assert!(std::any::type_name::<MonitorService>().ends_with("MonitorService"));
+        assert!(std::any::type_name::<NetworkRepository>().ends_with("NetworkRepository"));
+        assert!(std::any::type_name::<NetworkRepositoryTrait>().ends_with("NetworkRepositoryTrait"));
+        assert!(std::any::type_name::<NetworkService>().ends_with("NetworkService"));
+        assert!(std::any::type_name::<TriggerRepository>().ends_with("TriggerRepository"));
+        assert!(std::any::type_name::<TriggerRepositoryTrait>().ends_with("TriggerRepositoryTrait"));
+        assert!(std::any::type_name::<TriggerService>().ends_with("TriggerService"));
+        assert!(std::any::type_name::<DbMonitorRepository>().ends_with("DbMonitorRepository"));
+        assert!(std::any::type_name::<DbNetworkRepository>().ends_with("DbNetworkRepository"));
+        assert!(std::any::type_name::<DbTriggerRepository>().ends_with("DbTriggerRepository"));
+    }
+}
