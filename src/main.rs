@@ -192,6 +192,21 @@ impl Cli {
 /// # Errors
 /// Returns an error if service initialization fails or if there's an error during shutdown.
 #[tokio::main]
+/// Entry point for the blockchain monitoring service.
+///
+/// Initializes services, parses CLI arguments, sets up logging, and conditionally validates configuration or tests monitor execution. If running in service mode, it loads trigger scripts, starts network watchers for supported blockchains, and optionally launches a metrics server. Handles graceful shutdown on Ctrl+C or metrics server termination.
+///
+/// # Returns
+///
+/// Returns `Ok(())` on successful startup and shutdown, or an error if initialization or execution fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Run the service from the command line:
+/// // $ cargo run -- --log-level info --metrics
+/// tokio::runtime::Runtime::new().unwrap().block_on(main()).unwrap();
+/// ```
 async fn main() -> Result<()> {
 	let cli = Cli::parse();
 
@@ -693,8 +708,19 @@ async fn test_monitor_execution(config: MonitorExecutionTestConfig) -> Result<()
 	}
 }
 
-/// Validates configuration files and their structure
-async fn validate_configuration() {
+/// Validates the application's configuration files and structure.
+///
+/// Checks that core services can be initialized, verifies the presence of active monitors,
+/// and ensures that at least one network has active monitors configured. Logs validation
+/// results and provides guidance if configuration issues are detected.
+///
+/// # Examples
+///
+/// ```
+/// # tokio_test::block_on(async {
+/// validate_configuration().await;
+/// # });
+/// ```async fn validate_configuration() {
 	info!("Validating configuration files...");
 
 	// Initialize services in validation mode to check configurations

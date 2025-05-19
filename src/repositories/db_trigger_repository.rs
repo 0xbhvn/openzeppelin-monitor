@@ -15,6 +15,25 @@ pub struct DbTriggerRepository {
 }
 
 impl DbTriggerRepository {
+    /// Constructs the SQLite database URL from a file path, environment variable, or default value.
+    ///
+    /// If a path is provided, returns a URL using that path. Otherwise, uses the `DATABASE_URL` environment variable if set, or defaults to `"sqlite://monitor.db"`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::Path;
+    /// let url = db_url(Some(Path::new("custom.db")));
+    /// assert_eq!(url, "sqlite://custom.db");
+    ///
+    /// std::env::set_var("DATABASE_URL", "sqlite://env.db");
+    /// let url_env = db_url(None);
+    /// assert_eq!(url_env, "sqlite://env.db");
+    ///
+    /// std::env::remove_var("DATABASE_URL");
+    /// let url_default = db_url(None);
+    /// assert_eq!(url_default, "sqlite://monitor.db");
+    /// ```
     fn db_url(path: Option<&Path>) -> String {
         if let Some(p) = path {
             format!("sqlite://{}", p.display())
@@ -28,11 +47,38 @@ impl DbTriggerRepository {
 
 #[async_trait]
 impl TriggerRepositoryTrait for DbTriggerRepository {
+    /// Creates a new `DbTriggerRepository` by loading all triggers from the specified SQLite database.
+    ///
+    /// If a path is provided, it is used to determine the database location; otherwise, the environment variable `DATABASE_URL` or the default `"sqlite://monitor.db"` is used.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::Path;
+    /// let repo = DbTriggerRepository::new(Some(Path::new("mydb.sqlite"))).await?;
+    /// assert!(repo.get_all().len() >= 0);
+    /// ```
+    async fn new(path: Option<&Path>) -> Result<Self, RepositoryError>
     async fn new(path: Option<&Path>) -> Result<Self, RepositoryError> {
         let triggers = Self::load_all(path).await?;
         Ok(Self { triggers })
     }
 
+    /// Loads all triggers from the SQLite database into a map keyed by trigger name.
+    ///
+    /// Connects asynchronously to the database, retrieves all rows from the `triggers` table,
+    /// and deserializes each trigger's JSON data into a `Trigger` object. Returns a map of trigger names to their corresponding `Trigger` instances, or a `RepositoryError` if any step fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::Path;
+    /// # use your_crate::{DbTriggerRepository, TriggerRepositoryTrait};
+    /// # tokio_test::block_on(async {
+    /// let triggers = DbTriggerRepository::load_all(Some(Path::new("monitor.db"))).await.unwrap();
+    /// assert!(triggers.contains_key("example_trigger"));
+    /// # });
+    /// ```
     async fn load_all(path: Option<&Path>) -> Result<HashMap<String, Trigger>, RepositoryError> {
         let url = Self::db_url(path);
         let pool = SqlitePool::connect(&url)
@@ -52,10 +98,27 @@ impl TriggerRepositoryTrait for DbTriggerRepository {
         Ok(triggers)
     }
 
+    /// Retrieves a trigger by its ID, returning a cloned copy if found.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let repo = DbTriggerRepository { triggers: HashMap::new() };
+    /// assert!(repo.get("nonexistent").is_none());
+    /// ```
     fn get(&self, trigger_id: &str) -> Option<Trigger> {
         self.triggers.get(trigger_id).cloned()
     }
 
+    /// Returns a clone of all triggers stored in the repository.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let repo = DbTriggerRepository { triggers: HashMap::new() };
+    /// let all_triggers = repo.get_all();
+    /// assert!(all_triggers.is_empty());
+    /// ```
     fn get_all(&self) -> HashMap<String, Trigger> {
         self.triggers.clone()
     }
