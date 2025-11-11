@@ -10,6 +10,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 
+#[cfg(feature = "database")]
+use sqlx::{Pool, Postgres};
+
 #[derive(Debug, Error)]
 pub enum NotificationPoolError {
 	#[error("Failed to create HTTP client: {0}")]
@@ -17,16 +20,22 @@ pub enum NotificationPoolError {
 
 	#[error("Failed to create SMTP client: {0}")]
 	SmtpClientBuildError(String),
+
+	#[cfg(feature = "database")]
+	#[error("Failed to create database client: {0}")]
+	DatabaseClientBuildError(String),
 }
 
-/// Notification client pool that manages HTTP and SMTP clients for sending notifications.
+/// Notification client pool that manages HTTP, SMTP, and database clients for sending notifications.
 ///
-/// Provides a thread-safe way to access and create HTTP and SMTP clients
+/// Provides a thread-safe way to access and create HTTP, SMTP, and database clients
 /// for sending notifications. It uses a `ClientStorage` to hold the clients,
-/// allowing for efficient reuse and management of HTTP and SMTP connections.
+/// allowing for efficient reuse and management of connections.
 pub struct NotificationClientPool {
 	http_clients: ClientStorage<ClientWithMiddleware>,
 	smtp_clients: ClientStorage<AsyncSmtpTransport<Tokio1Executor>>,
+	#[cfg(feature = "database")]
+	db_clients: ClientStorage<Pool<Postgres>>,
 }
 
 impl NotificationClientPool {
@@ -34,6 +43,8 @@ impl NotificationClientPool {
 		Self {
 			http_clients: ClientStorage::new(),
 			smtp_clients: ClientStorage::new(),
+			#[cfg(feature = "database")]
+			db_clients: ClientStorage::new(),
 		}
 	}
 
@@ -135,6 +146,47 @@ impl NotificationClientPool {
 	#[cfg(test)]
 	pub async fn get_active_smtp_client_count(&self) -> usize {
 		self.smtp_clients.clients.read().await.len()
+	}
+
+	/// Get or create a database connection pool.
+	///
+	/// # Arguments
+	/// * `db_config` - Configuration for the database connection, including connection string
+	/// # Returns
+	/// * `Result<Arc<Pool<Postgres>>, NotificationPoolError>` - The database pool
+	///   wrapped in an `Arc` for shared ownership, or an error if pool creation fails.
+	#[cfg(feature = "database")]
+	pub async fn get_or_create_db_client(
+		&self,
+		db_config: &crate::services::notification::DatabaseConfig,
+	) -> Result<Arc<Pool<Postgres>>, NotificationPoolError> {
+		let key = db_config.connection_string.clone();
+		self.get_or_create_client(&key, &self.db_clients, || {
+			// Use tokio::runtime::Handle to create the pool synchronously
+			let pool = tokio::task::block_in_place(|| {
+				tokio::runtime::Handle::current().block_on(async {
+					sqlx::postgres::PgPoolOptions::new()
+						.max_connections(5)
+						.connect(&db_config.connection_string)
+						.await
+				})
+			});
+
+			pool.map_err(|e| {
+				NotificationPoolError::DatabaseClientBuildError(format!(
+					"Failed to create database pool: {}",
+					e
+				))
+			})
+		})
+		.await
+	}
+
+	/// Get the number of active database clients in the pool
+	#[cfg(test)]
+	#[cfg(feature = "database")]
+	pub async fn get_active_db_client_count(&self) -> usize {
+		self.db_clients.clients.read().await.len()
 	}
 }
 

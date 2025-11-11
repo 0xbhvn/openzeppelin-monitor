@@ -7,6 +7,8 @@ use async_trait::async_trait;
 
 use std::{collections::HashMap, sync::Arc};
 
+#[cfg(feature = "database")]
+mod database;
 mod email;
 mod error;
 pub mod payload_builder;
@@ -22,6 +24,8 @@ use crate::{
 	utils::{normalize_string, RetryConfig},
 };
 
+#[cfg(feature = "database")]
+pub use database::{DatabaseConfig, DatabaseNotificationExecutor, DatabaseNotifier};
 pub use email::{EmailContent, EmailNotifier, SmtpConfig};
 pub use error::NotificationError;
 pub use payload_builder::{
@@ -321,6 +325,39 @@ impl NotificationService {
 				notifier
 					.script_notify(monitor_match, script_content)
 					.await?;
+			}
+			#[cfg(feature = "database")]
+			TriggerType::Database => {
+				// Extract database configuration from the trigger
+				let db_config = database::DatabaseConfig::from_trigger_config(&trigger.config)?;
+
+				// Get or create the database client from the pool
+				let db_pool = self
+					.client_pool
+					.get_or_create_db_client(&db_config)
+					.await
+					.map_err(|e| {
+						NotificationError::execution_error(
+							"Failed to get database client from pool".to_string(),
+							Some(e.into()),
+							None,
+						)
+					})?;
+
+				// Create the notifier
+				let notifier = database::DatabaseNotifier::new(db_config, db_pool);
+
+				// Store the notification
+				notifier.notify(monitor_match, variables).await?;
+			}
+			#[cfg(not(feature = "database"))]
+			TriggerType::Database => {
+				return Err(NotificationError::config_error(
+					"Database notification feature is not enabled. Compile with --features database"
+						.to_string(),
+					None,
+					None,
+				));
 			}
 		}
 		Ok(())

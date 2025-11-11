@@ -36,6 +36,8 @@ pub enum TriggerType {
 	Discord,
 	/// Execute local script
 	Script,
+	/// Store notification in database
+	Database,
 }
 
 /// Notification message fields
@@ -134,6 +136,16 @@ pub enum TriggerTypeConfig {
 		arguments: Option<Vec<String>>,
 		/// Timeout in milliseconds
 		timeout_ms: u32,
+	},
+	/// Database storage configuration
+	Database {
+		/// Database connection string
+		connection_string: SecretValue,
+		/// Table name to store notifications
+		table_name: String,
+		/// Optional additional fields to store
+		#[serde(default)]
+		additional_fields: Option<std::collections::HashMap<String, String>>,
 	},
 }
 

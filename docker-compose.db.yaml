@@ -1,0 +1,53 @@
+---
+# PostgreSQL setup for database notification testing
+# Usage: docker-compose -f docker-compose.db.yaml up -d
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: openzeppelin-monitor-postgres
+    environment:
+      POSTGRES_USER: monitor
+      POSTGRES_PASSWORD: monitor_password
+      POSTGRES_DB: monitor_notifications
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U monitor -d monitor_notifications"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - monitor-network
+    restart: unless-stopped
+
+  # Optional: pgAdmin for database management
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: openzeppelin-monitor-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@monitor.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+    ports:
+      - "5050:80"
+    networks:
+      - monitor-network
+    restart: unless-stopped
+    profiles:
+      - admin
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  monitor-network:
+    driver: bridge

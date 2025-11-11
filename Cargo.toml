@@ -60,6 +60,7 @@ rust_decimal = "1.37.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10.0"
+sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "postgres", "json"], optional = true }
 soroban-spec = "23.0.2"
 stellar-rpc-client = "23.0.1"
 stellar-strkey = "0.0.13"
@@ -105,6 +106,7 @@ name = "openzeppelin-monitor"
 [features]
 test-ci-only = []
 fuzzing = []
+database = ["sqlx"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }

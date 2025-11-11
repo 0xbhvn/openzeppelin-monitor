@@ -270,6 +270,30 @@ proptest! {
 						prop_assert!(invalid_trigger.validate().is_err());
 					}
 				}
+				TriggerType::Database => {
+					if let TriggerTypeConfig::Database { connection_string: _, table_name: _, additional_fields: _ } = &trigger.config {
+						// Test empty connection string
+						invalid_trigger = trigger.clone();
+						if let TriggerTypeConfig::Database { connection_string: c, .. } = &mut invalid_trigger.config {
+							*c = SecretValue::Plain(SecretString::new("".to_string()));
+						}
+						prop_assert!(invalid_trigger.validate().is_err());
+
+						// Test empty table name
+						invalid_trigger = trigger.clone();
+						if let TriggerTypeConfig::Database { table_name: t, .. } = &mut invalid_trigger.config {
+							*t = "".to_string();
+						}
+						prop_assert!(invalid_trigger.validate().is_err());
+
+						// Test invalid table name (starts with number)
+						invalid_trigger = trigger.clone();
+						if let TriggerTypeConfig::Database { table_name: t, .. } = &mut invalid_trigger.config {
+							*t = "1invalid".to_string();
+						}
+						prop_assert!(invalid_trigger.validate().is_err());
+					}
+				}
 			}
 		}
 	}

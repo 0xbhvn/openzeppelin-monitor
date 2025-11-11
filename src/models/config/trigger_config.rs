@@ -108,6 +108,18 @@ impl ConfigLoader for Trigger {
 				})?;
 				*discord_url = SecretValue::Plain(resolved_url);
 			}
+			TriggerTypeConfig::Database {
+				connection_string, ..
+			} => {
+				let resolved_connection_string = connection_string.resolve().await.map_err(|e| {
+					ConfigError::parse_error(
+						format!("failed to resolve database connection string: {}", e),
+						Some(Box::new(e)),
+						None,
+					)
+				})?;
+				*connection_string = SecretValue::Plain(resolved_connection_string);
+			}
 			_ => {}
 		}
 
@@ -602,6 +614,48 @@ impl ConfigLoader for Trigger {
 					validate_script_config(script_path, language, timeout_ms)?;
 				}
 			}
+			TriggerType::Database => {
+				if let TriggerTypeConfig::Database {
+					connection_string,
+					table_name,
+					..
+				} = &self.config
+				{
+					// Validate connection string is not empty
+					if connection_string.trim().is_empty() {
+						return Err(ConfigError::validation_error(
+							"Database connection string cannot be empty",
+							None,
+							None,
+						));
+					}
+
+					// Validate table name is not empty
+					if table_name.trim().is_empty() {
+						return Err(ConfigError::validation_error(
+							"Database table name cannot be empty",
+							None,
+							None,
+						));
+					}
+
+					// Validate table name format (alphanumeric, underscore, and must start with letter or underscore)
+					if !table_name
+						.chars()
+						.all(|c| c.is_alphanumeric() || c == '_')
+						|| !table_name
+							.chars()
+							.next()
+							.map_or(false, |c| c.is_alphabetic() || c == '_')
+					{
+						return Err(ConfigError::validation_error(
+							"Invalid table name format. Must start with letter or underscore and contain only alphanumeric characters and underscores",
+							None,
+							None,
+						));
+					}
+				}
+			}
 		}
 
 		// Log a warning if the trigger uses an insecure protocol
@@ -626,6 +680,20 @@ impl ConfigLoader for Trigger {
 				}
 			}
 			TriggerTypeConfig::Telegram { .. } => {}
+			TriggerTypeConfig::Database {
+				connection_string, ..
+			} => {
+				// Warn if connection string doesn't use SSL/TLS
+				let conn_str = connection_string.as_str();
+				if !conn_str.contains("sslmode=require")
+					&& !conn_str.contains("sslmode=verify-ca")
+					&& !conn_str.contains("sslmode=verify-full")
+				{
+					tracing::warn!(
+						"Database connection string may not be using SSL/TLS. Consider adding sslmode parameter"
+					);
+				}
+			}
 			TriggerTypeConfig::Script { script_path, .. } => {
 				// Check script file permissions on Unix systems
 				#[cfg(unix)]
